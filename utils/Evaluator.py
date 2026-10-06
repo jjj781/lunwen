@@ -214,7 +214,9 @@ class Evaluator():
     @classmethod
     def SSIM(cls, image_F, image_A, image_B):
         cls.input_check(image_F, image_A, image_B)
-        return ssim(image_F,image_A)+ssim(image_F,image_B)
+        # Float images still hold 8-bit values. Older skimage took the float dtype
+        # range, data_range=2, which is what produces the paper's SSIM column.
+        return ssim(image_F, image_A, data_range=2) + ssim(image_F, image_B, data_range=2)
 
 
 def VIFF(image_F, image_A, image_B):

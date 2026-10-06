@@ -29,8 +29,9 @@ for dataset_name in ["TNO","RoadScene"]:
     DetailFuseLayer = nn.DataParallel(DetailFeatureExtraction(num_layers=1)).to(device)
 
     checkpoint = torch.load(ckpt_path, map_location=device)
-    Encoder.load_state_dict(checkpoint['CDDF_Encoder'])
-    Decoder.load_state_dict(checkpoint['CDDF_Decoder'])
+    # Released IVF weights still use the pre-rename DIDF_* keys.
+    Encoder.load_state_dict(checkpoint.get('CDDF_Encoder', checkpoint['DIDF_Encoder']))
+    Decoder.load_state_dict(checkpoint.get('CDDF_Decoder', checkpoint['DIDF_Decoder']))
     BaseFuseLayer.load_state_dict(checkpoint['BaseFuseLayer'])
     DetailFuseLayer.load_state_dict(checkpoint['DetailFuseLayer'])
     residual_mode = checkpoint.get('args', {}).get('residual', 'vis')

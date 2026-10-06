@@ -42,6 +42,8 @@ parser.add_argument('--decomp_cc', default='mean', choices=['mean', 'channel'],
                          "positive and negative channels cancel); 'channel': mean of per-channel squared CC")
 parser.add_argument('--residual', default='vis', choices=['vis', 'max'],
                     help="image added to the decoder output in Phase II: 'vis' (original) or max(VIS, IR)")
+parser.add_argument('--batch_size', type=int, default=4,
+                    help='paper uses 8; 4 or 6 lowers VRAM. Losses are averaged, so the learning rate stays 1e-4')
 parser.add_argument('--tag', default='', help='inserted into the checkpoint file name')
 args = parser.parse_args()
 
@@ -51,7 +53,7 @@ epoch_gap = 40  # epoches of Phase I
 
 lr = 1e-4
 weight_decay = 0
-batch_size = 8
+batch_size = args.batch_size
 GPU_number = os.environ['CUDA_VISIBLE_DEVICES']
 # Coefficients of the loss function
 coeff_mse_loss_VF = 1. # alpha1
@@ -89,7 +91,8 @@ scheduler4 = torch.optim.lr_scheduler.StepLR(optimizer4, step_size=optim_step, g
 
 MSELoss = nn.MSELoss()  
 L1Loss = nn.L1Loss()
-Loss_ssim = kornia.losses.SSIM(11, reduction='mean')
+# kornia 0.6 renamed SSIM to SSIMLoss; both are the distance 1 - SSIM.
+Loss_ssim = (kornia.losses.SSIM if hasattr(kornia.losses, 'SSIM') else kornia.losses.SSIMLoss)(11, reduction='mean')
 
 
 def decomposition_loss(feature_V_B, feature_I_B, feature_V_D, feature_I_D):
@@ -109,6 +112,20 @@ trainloader = DataLoader(H5Dataset(args.h5_path, augment=args.augment),
 
 loader = {'train': trainloader, }
 timestamp = datetime.datetime.now().strftime("%m-%d-%H-%M")
+
+def save_checkpoint():
+    checkpoint = {
+        'CDDF_Encoder': CDDF_Encoder.state_dict(),
+        'CDDF_Decoder': CDDF_Decoder.state_dict(),
+        'BaseFuseLayer': BaseFuseLayer.state_dict(),
+        'DetailFuseLayer': DetailFuseLayer.state_dict(),
+        'args': vars(args),
+    }
+    os.makedirs("models", exist_ok=True)
+    name = "CDDFuse_" + (args.tag + "_" if args.tag else "") + timestamp
+    path = os.path.join("models", name + '.pth')
+    torch.save(checkpoint, path)
+    return path
 
 '''
 ------------------------------------------------------------------------------
@@ -209,6 +226,7 @@ for epoch in range(num_epochs):
                 time_left,
             )
         )
+        sys.stdout.flush()
 
     # adjust the learning rate
 
@@ -226,15 +244,9 @@ for epoch in range(num_epochs):
         optimizer3.param_groups[0]['lr'] = 1e-6
     if optimizer4.param_groups[0]['lr'] <= 1e-6:
         optimizer4.param_groups[0]['lr'] = 1e-6
-    
-if True:
-    checkpoint = {
-        'CDDF_Encoder': CDDF_Encoder.state_dict(),
-        'CDDF_Decoder': CDDF_Decoder.state_dict(),
-        'BaseFuseLayer': BaseFuseLayer.state_dict(),
-        'DetailFuseLayer': DetailFuseLayer.state_dict(),
-        'args': vars(args),
-    }
-    os.makedirs("models", exist_ok=True)
-    name = "CDDFuse_" + (args.tag + "_" if args.tag else "") + timestamp
-    torch.save(checkpoint, os.path.join("models", name + '.pth'))
+
+    if (epoch + 1) % 10 == 0:
+        save_checkpoint()
+        sys.stdout.write("\n")
+
+save_checkpoint()

@@ -17,5 +17,7 @@ def image_read_cv2(path, mode='RGB'):
 def img_save(image,imagename,savepath):
     if not os.path.exists(savepath):
         os.makedirs(savepath)
-    # Gray_pic
+    # Callers pass float images in [0, 255]. Current Pillow cannot write that mode as PNG.
+    if np.issubdtype(np.asarray(image).dtype, np.floating):
+        image = np.clip(np.round(image), 0, 255).astype(np.uint8)
     imsave(os.path.join(savepath, "{}.png".format(imagename)),image)
