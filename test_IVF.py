@@ -1,5 +1,6 @@
-from net import Restormer_Encoder, Restormer_Decoder, BaseFeatureExtraction, DetailFeatureExtraction
+from net import Restormer_Encoder, Restormer_Decoder, BaseFeatureExtraction, DetailFeatureExtraction, fusion_residual
 import os
+import argparse
 import numpy as np
 from utils.Evaluator import Evaluator
 import torch
@@ -11,7 +12,9 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.CRITICAL)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-ckpt_path=r"models/CDDFuse_IVF.pth"
+parser = argparse.ArgumentParser()
+parser.add_argument('--ckpt', default=r"models/CDDFuse_IVF.pth")
+ckpt_path = parser.parse_args().ckpt
 for dataset_name in ["TNO","RoadScene"]:
     print("\n"*2+"="*80)
     model_name="CDDFuse    "
@@ -30,6 +33,7 @@ for dataset_name in ["TNO","RoadScene"]:
     Decoder.load_state_dict(checkpoint['CDDF_Decoder'])
     BaseFuseLayer.load_state_dict(checkpoint['BaseFuseLayer'])
     DetailFuseLayer.load_state_dict(checkpoint['DetailFuseLayer'])
+    residual_mode = checkpoint.get('args', {}).get('residual', 'vis')
     Encoder.eval()
     Decoder.eval()
     BaseFuseLayer.eval()
@@ -49,7 +53,7 @@ for dataset_name in ["TNO","RoadScene"]:
             feature_I_B, feature_I_D, feature_I = Encoder(data_IR)
             feature_F_B = BaseFuseLayer(feature_V_B + feature_I_B)
             feature_F_D = DetailFuseLayer(feature_V_D + feature_I_D)
-            data_Fuse, _ = Decoder(data_VIS, feature_F_B, feature_F_D)
+            data_Fuse, _ = Decoder(fusion_residual(data_VIS, data_IR, residual_mode), feature_F_B, feature_F_D)
             data_min, data_max = torch.min(data_Fuse), torch.max(data_Fuse)
             data_Fuse=(data_Fuse-data_min)/(data_max-data_min).clamp_min(1e-8)
             fi = np.squeeze((data_Fuse * 255).cpu().numpy())

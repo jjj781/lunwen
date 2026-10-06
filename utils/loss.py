@@ -40,9 +40,10 @@ class Sobelxy(nn.Module):
         return torch.abs(sobelx)+torch.abs(sobely)
 
 
-def cc(img1, img2):
+def cc(img1, img2, reduction='mean'):
     eps = torch.finfo(torch.float32).eps
-    """Correlation coefficient for (N, C, H, W) image; torch.float32 [0.,1.]."""
+    """Correlation coefficient for (N, C, H, W) image; torch.float32 [0.,1.].
+    reduction='none' returns the per-channel coefficients with shape (N, C)."""
     N, C, _, _ = img1.shape
     img1 = img1.reshape(N, C, -1)
     img2 = img2.reshape(N, C, -1)
@@ -51,4 +52,6 @@ def cc(img1, img2):
     cc = torch.sum(img1 * img2, dim=-1) / (eps + torch.sqrt(torch.sum(img1 **
                                                                       2, dim=-1)) * torch.sqrt(torch.sum(img2**2, dim=-1)))
     cc = torch.clamp(cc, -1., 1.)
+    if reduction == 'none':
+        return cc
     return cc.mean()

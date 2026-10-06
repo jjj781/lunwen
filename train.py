@@ -6,11 +6,12 @@ Import packages
 ------------------------------------------------------------------------------
 '''
 
-from net import Restormer_Encoder, Restormer_Decoder, BaseFeatureExtraction, DetailFeatureExtraction
+from net import Restormer_Encoder, Restormer_Decoder, BaseFeatureExtraction, DetailFeatureExtraction, fusion_residual
 from utils.dataset import H5Dataset
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'  
 import sys
+import argparse
 import time
 import datetime
 import torch
@@ -30,6 +31,19 @@ Configure our network
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 model_str = 'CDDFuse'
+
+# Defaults reproduce the original CDDFuse training.
+parser = argparse.ArgumentParser()
+parser.add_argument('--h5_path', default=r"data/MSRS_train_imgsize_128_stride_200.h5")
+parser.add_argument('--augment', action='store_true',
+                    help='random rot90/flip applied jointly to each VIS/IR patch pair')
+parser.add_argument('--decomp_cc', default='mean', choices=['mean', 'channel'],
+                    help="'mean': square of the channel-averaged CC of detail features (original, "
+                         "positive and negative channels cancel); 'channel': mean of per-channel squared CC")
+parser.add_argument('--residual', default='vis', choices=['vis', 'max'],
+                    help="image added to the decoder output in Phase II: 'vis' (original) or max(VIS, IR)")
+parser.add_argument('--tag', default='', help='inserted into the checkpoint file name')
+args = parser.parse_args()
 
 # . Set the hyper-parameters for training
 num_epochs = 120 # total epoch
@@ -78,8 +92,17 @@ L1Loss = nn.L1Loss()
 Loss_ssim = kornia.losses.SSIM(11, reduction='mean')
 
 
+def decomposition_loss(feature_V_B, feature_I_B, feature_V_D, feature_I_D):
+    cc_loss_B = cc(feature_V_B, feature_I_B)
+    if args.decomp_cc == 'channel':
+        cc_loss_D_sq = (cc(feature_V_D, feature_I_D, reduction='none') ** 2).mean()
+    else:
+        cc_loss_D_sq = cc(feature_V_D, feature_I_D) ** 2
+    return cc_loss_D_sq / (1.01 + cc_loss_B)
+
+
 # data loader
-trainloader = DataLoader(H5Dataset(r"data/MSRS_train_imgsize_128_stride_200.h5"),
+trainloader = DataLoader(H5Dataset(args.h5_path, augment=args.augment),
                          batch_size=batch_size,
                          shuffle=True,
                          num_workers=0)
@@ -122,15 +145,13 @@ for epoch in range(num_epochs):
             data_VIS_hat, _ = CDDF_Decoder(data_VIS, feature_V_B, feature_V_D)
             data_IR_hat, _ = CDDF_Decoder(data_IR, feature_I_B, feature_I_D)
 
-            cc_loss_B = cc(feature_V_B, feature_I_B)
-            cc_loss_D = cc(feature_V_D, feature_I_D)
             mse_loss_V = 5 * Loss_ssim(data_VIS, data_VIS_hat) + MSELoss(data_VIS, data_VIS_hat)
             mse_loss_I = 5 * Loss_ssim(data_IR, data_IR_hat) + MSELoss(data_IR, data_IR_hat)
 
             Gradient_loss = L1Loss(kornia.filters.SpatialGradient()(data_VIS),
                                    kornia.filters.SpatialGradient()(data_VIS_hat))
 
-            loss_decomp =  (cc_loss_D) ** 2/ (1.01 + cc_loss_B)  
+            loss_decomp = decomposition_loss(feature_V_B, feature_I_B, feature_V_D, feature_I_D)
 
             loss = coeff_mse_loss_VF * mse_loss_V + coeff_mse_loss_IF * \
                    mse_loss_I + coeff_decomp * loss_decomp + coeff_tv * Gradient_loss
@@ -147,15 +168,14 @@ for epoch in range(num_epochs):
             feature_I_B, feature_I_D, feature_I = CDDF_Encoder(data_IR)
             feature_F_B = BaseFuseLayer(feature_I_B+feature_V_B)
             feature_F_D = DetailFuseLayer(feature_I_D+feature_V_D)
-            data_Fuse, feature_F = CDDF_Decoder(data_VIS, feature_F_B, feature_F_D)
+            data_Fuse, feature_F = CDDF_Decoder(fusion_residual(data_VIS, data_IR, args.residual),
+                                                feature_F_B, feature_F_D)
 
             
             mse_loss_V = 5*Loss_ssim(data_VIS, data_Fuse) + MSELoss(data_VIS, data_Fuse)
             mse_loss_I = 5*Loss_ssim(data_IR,  data_Fuse) + MSELoss(data_IR,  data_Fuse)
 
-            cc_loss_B = cc(feature_V_B, feature_I_B)
-            cc_loss_D = cc(feature_V_D, feature_I_D)
-            loss_decomp =   (cc_loss_D) ** 2 / (1.01 + cc_loss_B)  
+            loss_decomp = decomposition_loss(feature_V_B, feature_I_B, feature_V_D, feature_I_D)
             fusionloss, _,_  = criteria_fusion(data_VIS, data_IR, data_Fuse)
             
             loss = fusionloss + coeff_decomp * loss_decomp
@@ -213,5 +233,8 @@ if True:
         'CDDF_Decoder': CDDF_Decoder.state_dict(),
         'BaseFuseLayer': BaseFuseLayer.state_dict(),
         'DetailFuseLayer': DetailFuseLayer.state_dict(),
+        'args': vars(args),
     }
-    torch.save(checkpoint, os.path.join("models/CDDFuse_"+timestamp+'.pth'))
+    os.makedirs("models", exist_ok=True)
+    name = "CDDFuse_" + (args.tag + "_" if args.tag else "") + timestamp
+    torch.save(checkpoint, os.path.join("models", name + '.pth'))

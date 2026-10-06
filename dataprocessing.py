@@ -1,4 +1,5 @@
 import os
+import argparse
 import h5py
 import numpy as np
 from tqdm import tqdm
@@ -41,9 +42,15 @@ def is_low_contrast(image, fraction_threshold=0.1, lower_percentile=10,
     ratio = (limits[1] - limits[0]) / limits[1]
     return ratio < fraction_threshold
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--img_size', type=int, default=128, help='patch size')
+parser.add_argument('--stride', type=int, default=200,
+                    help='patch stride; 200 > img_size leaves ~2/3 of each 480x640 MSRS image unused')
+args = parser.parse_args()
+
 data_name="MSRS_train"
-img_size=128   #patch size
-stride=200     #patch stride
+img_size=args.img_size   #patch size
+stride=args.stride       #patch stride
 
 IR_files = sorted(get_img_file(r"MSRS_train/ir"))
 VIS_files   = sorted(get_img_file(r"MSRS_train/vi"))

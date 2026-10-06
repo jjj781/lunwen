@@ -392,6 +392,13 @@ class Restormer_Decoder(nn.Module):
         else:
             out_enc_level1 = self.output(out_enc_level1)
         return self.sigmoid(out_enc_level1), out_enc_level0
+
+
+def fusion_residual(data_VIS, data_IR, mode='vis'):
+    """Image added to the decoder output when decoding fused features."""
+    if mode == 'max':
+        return torch.max(data_VIS, data_IR)
+    return data_VIS
     
 if __name__ == '__main__':
     height = 128
